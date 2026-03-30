@@ -45,6 +45,25 @@ cp repos/mettaclaw/run.metta ./
 OPENAI_API_KEY=... sh run.sh run.metta
 ```
 
+**Docker (Hardened Multi-Stage + Docker-Native Networking)**
+
+Build and run with Docker Compose:
+
+```
+OPENAI_API_KEY=... docker compose up --build
+```
+
+Security-focused defaults now included:
+- Multi-stage build (toolchain isolated from runtime image)
+- Reduced runtime packages compared to the old single-stage style
+- `.dockerignore` to reduce build-context leakage risk
+- No in-container iptables/firewall script at runtime
+- Process runs directly as non-root (`65534:65534`)
+- `security_opt: [no-new-privileges:true]`
+- `read_only: true` with `tmpfs` mounts
+- Persistent writable mount only for `./memory`
+- User-defined bridge network (`appnet`) without published ports by default
+
 **Auto-install/run**
 
 Alternatively, if PeTTa is already installed and the latest version pulled (v1.0.2 or latest commit), then, running the following MeTTa file from the root folder, installs and runs MeTTaClaw (assuming OPENAI_API_KEY is set):
@@ -74,7 +93,5 @@ Shell output of the actual invocation of the generated MeTTa code:
 System also added it into its Atom Space storage (embedding vector omitted):
 
 <img width="379" height="69" alt="image" src="https://github.com/user-attachments/assets/6aa59deb-33b4-42b9-a535-ae153b4b7a18" />
-
-
 
 
