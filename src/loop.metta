@@ -35,7 +35,7 @@
           (let $prompt (getContext)
                (progn (println! (---------iteration $k))
                       (let* (($msgrcv (string-safe (repr (receive))))
-                             ($msgnew (prog1 (and (!= $msgrcv "") (!= $msgrcv (get-state &prevmsg)))
+                             ($msgnew (prog1 (and (> (string_length $msgrcv) 0) (!= $msgrcv (get-state &prevmsg)))
                                              (if (!= $msgrcv "") (change-state! &prevmsg $msgrcv) _)))
                              ($msg (get-state &prevmsg))
                              ($_ (if (and (> $k 1) $msgnew)
