@@ -1,0 +1,26 @@
+services:
+  mettaclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mettaclaw:secure
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    user: "65534:65534"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /run:size=16m,mode=755
+      - /var/tmp:size=64m,mode=1777
+    volumes:
+      - ./memory:/PeTTa/repos/mettaclaw/memory:rw
+    restart: unless-stopped
+    init: true
+    networks:
+      - appnet
+
+networks:
+  appnet:
+    driver: bridge
