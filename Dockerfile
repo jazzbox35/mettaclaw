@@ -17,7 +17,6 @@ RUN apt-get update \
       pkg-config \
       python3 \
       python3-dev \
-      python3-venv \
       python3-pip \
       libopenblas-dev \
       libblas-dev \
@@ -43,16 +42,14 @@ RUN cmake -B build -DFAISS_ENABLE_GPU=OFF -DFAISS_ENABLE_PYTHON=OFF -DBUILD_SHAR
 WORKDIR /PeTTa
 RUN sh build.sh
 
-# Isolated Python environment instead of modifying system packages.
-RUN python3 -m venv /venv \
- && /venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
- && /venv/bin/pip install --no-cache-dir janus-swi openai
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+      janus-swi \
+      openai
 
 FROM ${SWIPL_IMAGE} AS runtime
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive \
-    PATH="/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
@@ -71,7 +68,6 @@ WORKDIR /PeTTa
 
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /PeTTa /PeTTa
-COPY --from=builder /venv /venv
 
 # Bring in only local MeTTaClaw source (filtered by .dockerignore).
 COPY . /PeTTa/repos/mettaclaw
