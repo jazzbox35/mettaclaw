@@ -1,106 +1,80 @@
-# Dockerfile to spin up MeTTaclaw 
-#
-# Includes:  PeTTa, MORK, PathMap, torch (uncomment if needed)
-#
-# Use command to start:
-#
-# docker run --cap-add NET_ADMIN -it   -e OPENAI_API_KEY=... <image> 
-#
+# ==========================================
+# Stage 1: Build Environment (Heavy tools stay here)
+# ==========================================
+FROM docker.io/library/swipl:latest as build
 
-FROM docker.io/library/swipl:latest as os
-
-# Install system build tools, Python, etc
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
-      nano \
       build-essential \
-      procps \
-      curl \
       python3 \
       python3-pip \
       python3-dev \
       ca-certificates \
       pkg-config \
       cmake \
-      iptables \
-      util-linux \
- && rm -rf /var/lib/apt/lists/*
-
-FROM os as build
-
-# 👇 RUST INSTALL
-# -----------------------------------------
-#RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain nightly-2026-03-19
-#ENV PATH="/root/.cargo/bin:${PATH}"
-
-# 👇 PATHMAP INSTALL
-#RUN git clone --depth 1 https://github.com/Adam-Vandervorst/PathMap.git /PathMap
-#WORKDIR /PathMap
-#RUN RUSTFLAGS="-C target-cpu=native" cargo build --release
-
-# 👇 MORK INSTALL
-#RUN git clone --depth 1 https://github.com/trueagi-io/MORK.git /MORK
-#WORKDIR /MORK/kernel
-#RUN RUSTFLAGS="-C target-cpu=native" cargo build --release
-
-# 👇 PETTA INSTALL
-#    Clone PeTTa repository directly into /PeTTa
-RUN git clone --depth 1 https://github.com/patham9/PeTTa.git /PeTTa
-
-# 👇 Install facebook research Faiss, contains several methods for similarity search.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
       libopenblas-dev \
       libblas-dev \
       liblapack-dev \
       gfortran \
       libgflags-dev \
  && rm -rf /var/lib/apt/lists/*
+
+# Install FAISS
 RUN git clone --depth 1 https://github.com/facebookresearch/faiss.git /faiss
 WORKDIR /faiss
-RUN cmake -B build -DFAISS_ENABLE_GPU=OFF -DFAISS_ENABLE_PYTHON=OFF -DBUILD_SHARED_LIBS=OFF
-RUN cmake --build build --config Release --parallel
-RUN cmake --install build
+RUN cmake -B build -DFAISS_ENABLE_GPU=OFF -DFAISS_ENABLE_PYTHON=OFF -DBUILD_SHARED_LIBS=OFF \
+ && cmake --build build --config Release --parallel \
+ && cmake --install build
 
-# Build foreign function interfaces for PeTTa to utilize MORK and FAISS
+# Install PeTTa
+RUN git clone --depth 1 https://github.com/patham9/PeTTa.git /PeTTa
 WORKDIR /PeTTa
 RUN sh build.sh
 
-FROM os
+# ==========================================
+# Stage 2: Production Environment (Lean & Secure)
+# ==========================================
+FROM docker.io/library/swipl:latest as final
 
-# 👇 Copy artifacts from build stage
-COPY --from=build /PeTTa /PeTTa
+# Install ONLY runtime necessities (no compilers, no git, no nano)
+# Also install 'gosu' to safely step down from root after setting the firewall
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 \
+      python3-pip \
+      iptables \
+      gosu \
+ && rm -rf /var/lib/apt/lists/*
 
-# 👇 Install janus-swi system-wide
-RUN pip3 install --no-cache-dir --break-system-packages janus-swi
+# Create a non-root user and group
+RUN groupadd -r mettagroup && useradd -r -g mettagroup mettauser
 
-# 👇 METTACLAW INSTALL
-WORKDIR /PeTTa
-RUN mkdir -p repos
-ADD . repos/mettaclaw
-RUN python3 -m pip install --no-cache-dir --break-system-packages openai
-RUN cp repos/mettaclaw/run.metta ./
+# Install Python dependencies
+RUN pip3 install --no-cache-dir --break-system-packages janus-swi openai
 
+# Set up the working directory
+WORKDIR /app
 
-# 👇 Pytorch install
-#RUN pip install torch --no-cache-dir --break-system-package \
-#     --index-url https://download.pytorch.org/whl/cpu
+# Copy compiled artifacts from the build stage
+COPY --from=build /PeTTa /app/PeTTa
+COPY --from=build /usr/local/lib/libfaiss.a /usr/local/lib/
+# (Copy other necessary compiled libs as required by MORK/PeTTa)
 
-# 👇 FIREWALL ENTRYPOINT — copied from cloned repo
-RUN cp repos/mettaclaw/firewall.sh /firewall.sh \
+# Download MeTTaClaw code (simulated here since we don't have git in final image)
+# Ideally, you'd COPY this from your local context instead of cloning inside Docker.
+COPY ./mettaclaw /app/repos/mettaclaw
+RUN cp /app/repos/mettaclaw/run.metta ./ \
+ && cp /app/repos/mettaclaw/firewall.sh /firewall.sh \
  && chmod +x /firewall.sh
 
-WORKDIR /PeTTa
+# Lock down filesystem permissions
+# 1. Give root ownership of everything (so the non-root user can't change it)
+RUN chown -R root:root /app \
+ && chmod -R 755 /app
 
-# Allow Mettaclaw limited write access
-RUN chown 65534:65534 repos/mettaclaw/memory/LTM.metta \
- && chmod 644 repos/mettaclaw/memory/LTM.metta
-RUN chown 65534:65534 repos/mettaclaw/memory/history.metta \
- && chmod 644 repos/mettaclaw/memory/history.metta
+# 2. Create a specific, isolated data directory for MeTTaClaw's legitimate writes (e.g., logs, Atomspace DB)
+RUN mkdir -p /app/data \
+ && chown -R mettauser:mettagroup /app/data
 
-# The firewall script loads the container's rules as root, then reduces privileges to 65534 'nobody' user.
 ENTRYPOINT ["/firewall.sh"]
-
-# Start Mettaclaw.
-CMD ["sh", "run.sh", "run.metta", "default"]
+# Use gosu in the CMD to step down to the non-root user before running the app
+CMD ["gosu", "mettauser", "sh", "run.sh", "run.metta", "default"]
